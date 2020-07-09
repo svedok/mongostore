@@ -5,23 +5,22 @@
 package mongostore
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
 
-	"github.com/globalsign/mgo"
-	"github.com/globalsign/mgo/bson"
 	"github.com/gorilla/securecookie"
 	"github.com/gorilla/sessions"
-)
-
-var (
-	ErrInvalidId = errors.New("mgostore: invalid session id")
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // Session object store in MongoDB
 type Session struct {
-	Id       bson.ObjectId `bson:"_id,omitempty"`
+	Id       primitive.ObjectID `bson:"_id,omitempty"`
 	Data     string
 	Modified time.Time
 }
@@ -31,13 +30,12 @@ type MongoStore struct {
 	Codecs  []securecookie.Codec
 	Options *sessions.Options
 	Token   TokenGetSeter
-	coll    *mgo.Collection
+	coll    *mongo.Collection
 }
 
 // NewMongoStore returns a new MongoStore.
 // Set ensureTTL to true let the database auto-remove expired object by maxAge.
-func NewMongoStore(c *mgo.Collection, maxAge int, ensureTTL bool,
-	keyPairs ...[]byte) *MongoStore {
+func NewMongoStore(c *mongo.Collection, maxAge int, ensureTTL bool, keyPairs ...[]byte) (*MongoStore, error) {
 	store := &MongoStore{
 		Codecs: securecookie.CodecsFromPairs(keyPairs...),
 		Options: &sessions.Options{
@@ -51,15 +49,27 @@ func NewMongoStore(c *mgo.Collection, maxAge int, ensureTTL bool,
 	store.MaxAge(maxAge)
 
 	if ensureTTL {
-		c.EnsureIndex(mgo.Index{
-			Key:         []string{"modified"},
-			Background:  true,
-			Sparse:      true,
-			ExpireAfter: time.Duration(maxAge) * time.Second,
-		})
+		o := options.Index()
+		o.SetBackground(true)
+		o.SetSparse(true)
+		o.SetExpireAfterSeconds(int32(maxAge))
+
+		_, err := c.Indexes().CreateOne(
+			context.Background(),
+			mongo.IndexModel{
+				Keys: bson.M{
+					"modified": 1,
+				},
+				Options: o,
+			},
+		)
+
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	return store
+	return store, nil
 }
 
 // Get registers and returns a session for the given name and session store.
@@ -108,7 +118,7 @@ func (m *MongoStore) Save(r *http.Request, w http.ResponseWriter,
 	}
 
 	if session.ID == "" {
-		session.ID = bson.NewObjectId().Hex()
+		session.ID = primitive.NewObjectID().Hex()
 	}
 
 	if err := m.upsert(session); err != nil {
@@ -140,12 +150,13 @@ func (m *MongoStore) MaxAge(age int) {
 }
 
 func (m *MongoStore) load(session *sessions.Session) error {
-	if !bson.IsObjectIdHex(session.ID) {
-		return ErrInvalidId
+	oid, err := primitive.ObjectIDFromHex(session.ID)
+	if err != nil {
+		return errors.New("invalid session id")
 	}
 
-	s := Session{}
-	err := m.coll.FindId(bson.ObjectIdHex(session.ID)).One(&s)
+	var s Session
+	err = m.coll.FindOne(context.Background(), bson.M{"_id": oid}).Decode(&s)
 	if err != nil {
 		return err
 	}
@@ -159,8 +170,9 @@ func (m *MongoStore) load(session *sessions.Session) error {
 }
 
 func (m *MongoStore) upsert(session *sessions.Session) error {
-	if !bson.IsObjectIdHex(session.ID) {
-		return ErrInvalidId
+	oid, err := primitive.ObjectIDFromHex(session.ID)
+	if err != nil {
+		return errors.New("invalid session id")
 	}
 
 	var modified time.Time
@@ -173,19 +185,22 @@ func (m *MongoStore) upsert(session *sessions.Session) error {
 		modified = time.Now()
 	}
 
-	encoded, err := securecookie.EncodeMulti(session.Name(), session.Values,
-		m.Codecs...)
+	encoded, err := securecookie.EncodeMulti(session.Name(), session.Values, m.Codecs...)
 	if err != nil {
 		return err
 	}
 
 	s := Session{
-		Id:       bson.ObjectIdHex(session.ID),
+		Id:       oid,
 		Data:     encoded,
 		Modified: modified,
 	}
 
-	_, err = m.coll.UpsertId(s.Id, &s)
+	_, err = m.coll.UpdateOne(
+		context.Background(),
+		bson.M{"_id": oid},
+		bson.M{"$set": s},
+		options.Update().SetUpsert(true))
 	if err != nil {
 		return err
 	}
@@ -194,9 +209,15 @@ func (m *MongoStore) upsert(session *sessions.Session) error {
 }
 
 func (m *MongoStore) delete(session *sessions.Session) error {
-	if !bson.IsObjectIdHex(session.ID) {
-		return ErrInvalidId
+	oid, err := primitive.ObjectIDFromHex(session.ID)
+	if err != nil {
+		return errors.New("invalid session id")
 	}
 
-	return m.coll.RemoveId(bson.ObjectIdHex(session.ID))
+	_, err = m.coll.DeleteOne(context.Background(), bson.M{"_id": oid})
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
