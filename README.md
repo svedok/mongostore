@@ -3,17 +3,9 @@ mongostore
 
 [Gorilla's Session](http://www.gorillatoolkit.org/pkg/sessions) store implementation with MongoDB
 
-## Requirements
-
-Depends on the [mgo](https://labix.org/v2/mgo) library.
-
 ## Installation
 
-    go get github.com/kidstuff/mongostore
-
-## Documentation
-
-Available on [godoc.org](http://www.godoc.org/github.com/kidstuff/mongostore).
+    go get github.com/svedok/mongostore
 
 ### Example
 ```go
