@@ -1,7 +1,7 @@
 mongostore
 ==========
 
-[Gorilla's Session](http://www.gorillatoolkit.org/pkg/sessions) store implementation with MongoDB
+MongoDB implementation for [Gorilla's Session](http://www.gorillatoolkit.org/pkg/sessions) store using the official [MongoDB](https://github.com/mongodb/mongo-go-driver) driver for Go.
 
 ## Installation
 
