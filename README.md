@@ -11,14 +11,16 @@ MongoDB implementation for [Gorilla's Session](http://www.gorillatoolkit.org/pkg
 ```go
     func foo(rw http.ResponseWriter, req *http.Request) {
         // Fetch new store.
-        dbsess, err := mgo.Dial("localhost")
+        m, err := mongo.Connect(context.Background())
         if err != nil {
             panic(err)
         }
-        defer dbsess.Close()
+        defer m.Disconnect(context.Background())
 
-        store := mongostore.NewMongoStore(dbsess.DB("test").C("test_session"), 3600, true,
-            []byte("secret-key"))
+        store, err := NewMongoStore(m.Database("test").Collection("test_session"), 3600, true, []byte("secret-key"))
+        if err != nil {
+            panic(err)
+        }
 
         // Get a session.
         session, err := store.Get(req, "session-key")
